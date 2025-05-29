@@ -1,25 +1,9 @@
 fastapi
-uvicorn[standard] 
 pydantic
-python-dotenv     
-requests          
-
-pymongo
-
-pinecone-client
-
-langchain-pinecone  # New namespace, preferred
-
-
-# Langchain & LLMs
 langchain
-# Choose based on your LLM provider:
-langchain-openai  # For OpenAI models
-# langchain-anthropic # For Anthropic models
-
-# Langsmith (if not included in core langchain, though usually is)
-langsmith
-
-# Sentence Transformers (if using local embeddings for some reason,
-# but plan is to use OpenAI/Anthropic embeddings via Langchain)
-# sentence-transformers
+langchain-community
+openai
+pinecone
+motor
+httpx
+python-dotenv
