@@ -1,0 +1,247 @@
+# app/services/cart_service.py
+import os
+import sys
+from datetime import datetime
+from typing import List, Optional, Dict, Any
+
+# Add project root to Python path when running directly
+if __name__ == "__main__":
+    # Add project root to Python path for imports
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+    sys.path.insert(0, project_root)
+
+from pymongo import ReturnDocument, errors
+from pymongo.collection import Collection
+
+from app.models.schemas import UserCartStored, CartItem, ProductStored
+from app.db.database import get_carts_collection, get_products_collection
+
+
+def add_to_cart(
+    user_id: str,
+    product_id: int,
+    quantity: int = 1
+) -> Optional[UserCartStored]:
+    """
+    Adds a specified quantity of a product to a user's cart.
+    Updates quantity if the product exists, or creates a new cart/item.
+    Returns the updated UserCartStored or None on failure.
+    """
+    try:
+        carts_col: Collection = get_carts_collection()
+        products_col: Collection = get_products_collection()
+
+        # Fetch product details
+        prod_doc = products_col.find_one({"id": product_id}, {"_id": 0, "id": 1, "title": 1, "price": 1, "thumbnail": 1})
+        if not prod_doc:
+            print(f"Product {product_id} not found.")
+            return None
+            
+        # Build cart item data dict
+        cart_item = CartItem(
+            product_id=prod_doc["id"],
+            title=prod_doc.get("title", ""),
+            price=prod_doc.get("price", 0.0),
+            thumbnail=prod_doc.get("thumbnail"),
+            quantity=quantity
+        ).model_dump()
+
+        # Use datetime.now() with UTC timezone instead of deprecated utcnow()
+        from datetime import timezone
+        current_time = datetime.now(timezone.utc)
+
+        # Check if the user already has a cart
+        existing_cart = carts_col.find_one({"user_id": user_id})
+
+        if existing_cart:
+            # User has a cart, check if item exists in cart
+            item_exists = False
+            for item in existing_cart.get("items", []):
+                if item.get("product_id") == product_id:
+                    item_exists = True
+                    break
+
+            if item_exists:
+                # Item exists, update quantity
+                updated_doc = carts_col.find_one_and_update(
+                    {"user_id": user_id, "items.product_id": product_id},
+                    {"$inc": {"items.$.quantity": quantity},
+                     "$set": {"last_updated": current_time}},
+                    return_document=ReturnDocument.AFTER
+                )
+            else:
+                # Item doesn't exist, add it to the cart
+                updated_doc = carts_col.find_one_and_update(
+                    {"user_id": user_id},
+                    {"$push": {"items": cart_item},
+                     "$set": {"last_updated": current_time}},
+                    return_document=ReturnDocument.AFTER
+                )
+        else:
+            # Create a new cart with the item
+            updated_doc = carts_col.insert_one({
+                "user_id": user_id,
+                "items": [cart_item],
+                "last_updated": current_time
+            })
+            if updated_doc.inserted_id:
+                updated_doc = carts_col.find_one({"_id": updated_doc.inserted_id})
+
+        if not updated_doc:
+            return None
+
+        # Parse into Pydantic model
+        return UserCartStored.model_validate(updated_doc)
+
+    except errors.PyMongoError as e:
+        print(f"MongoDB error in add_to_cart: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error in add_to_cart: {e}")
+        return None
+
+
+
+def get_cart(user_id: str) -> Optional[UserCartStored]:
+    """
+    Retrieves the current shopping cart for a given user.
+    Returns None if no cart exists or on error.
+    """
+    try:
+        carts_col: Collection = get_carts_collection()
+        cart_doc = carts_col.find_one({"user_id": user_id})
+        if not cart_doc:
+            return None
+        return UserCartStored.model_validate(cart_doc)
+    except errors.PyMongoError as e:
+        print(f"MongoDB error in get_cart: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error in get_cart: {e}")
+        return None
+
+
+
+def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartStored]:
+    """
+    Removes a specific product entirely from a user's cart.
+    Returns the updated UserCartStored or None on failure.
+    """
+    try:
+        carts_col: Collection = get_carts_collection()
+        updated_doc = carts_col.find_one_and_update(
+            {"user_id": user_id},
+            {"$pull": {"items": {"product_id": product_id}},
+             "$set": {"last_updated": datetime.utcnow()}},
+            return_document=ReturnDocument.AFTER
+        )
+        if not updated_doc:
+            return None
+        return UserCartStored.model_validate(updated_doc)
+    except errors.PyMongoError as e:
+        print(f"MongoDB error in remove_from_cart: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error in remove_from_cart: {e}")
+        return None
+
+
+
+def get_cart_details_for_llm_context(user_id: str) -> str:
+    """
+    Fetches the user's cart and returns a concise string summary for LLM prompts.
+    """
+    try:
+        cart = get_cart(user_id)
+        if not cart or not cart.items:
+            return "User's cart is empty."
+
+        summary_items: List[str] = []
+        for item in cart.items:
+            summary_items.append(f"{item.title} (Qty: {item.quantity})")
+
+        return f"User's cart contains: {', '.join(summary_items)}."
+    except Exception as e:
+        print(f"Error generating cart summary for user {user_id}: {e}")
+        return ""
+
+# Example usage
+if __name__ == "__main__":
+    print("Running cart service example...")
+    
+    # Test with a product ID that should exist in your database
+    # First try to get an existing product ID from the database
+    try:
+        products_col = get_products_collection()
+        sample_product = products_col.find_one({})
+        if sample_product and "id" in sample_product:
+            product_id = sample_product["id"]
+            print(f"Found product ID: {product_id}")
+        else:
+            product_id = 1  # Use a default ID if no products found
+            print(f"No products found, using default ID: {product_id}")
+    except Exception as e:
+        print(f"Error looking up product: {e}")
+        product_id = 1  # Use a default ID
+    
+    user_id = "test_user"
+    quantity = 2
+    
+    # Test 1: Add to cart
+    print("\n=== Test 1: Add to Cart ===")
+    print(f"Adding product {product_id} to cart for user {user_id}...")
+    cart = add_to_cart(user_id, product_id, quantity)
+    
+    if cart:
+        print(f"Cart updated successfully!")
+        print(f"User: {cart.user_id}")
+        print(f"Items: {len(cart.items)}")
+        for item in cart.items:
+            print(f"  - {item.title} (ID: {item.product_id}, Qty: {item.quantity}, Price: ${item.price})")
+    else:
+        print("Failed to update cart.")
+    
+    # Test 2: Get cart
+    print("\n=== Test 2: Get Cart ===")
+    print(f"Getting cart for user {user_id}...")
+    retrieved_cart = get_cart(user_id)
+    
+    if retrieved_cart:
+        print(f"Cart retrieved successfully!")
+        print(f"User: {retrieved_cart.user_id}")
+        print(f"Items: {len(retrieved_cart.items)}")
+        print(f"Last updated: {retrieved_cart.last_updated}")
+        for item in retrieved_cart.items:
+            print(f"  - {item.title} (ID: {item.product_id}, Qty: {item.quantity}, Price: ${item.price})")
+    else:
+        print("No cart found or error retrieving cart.")
+    
+    # Get cart summary for LLM
+    cart_summary = get_cart_details_for_llm_context(user_id)
+    print(f"\nCart summary for LLM: {cart_summary}")
+    
+    # Test 3: Remove from cart
+    if retrieved_cart and retrieved_cart.items:
+        print("\n=== Test 3: Remove from Cart ===")
+        # Get the first product ID from the cart
+        product_to_remove = retrieved_cart.items[0].product_id
+        print(f"Removing product {product_to_remove} from cart...")
+        
+        updated_cart = remove_from_cart(user_id, product_to_remove)
+        
+        if updated_cart:
+            print(f"Product removed successfully!")
+            print(f"Updated cart has {len(updated_cart.items)} items")
+            if updated_cart.items:
+                for item in updated_cart.items:
+                    print(f"  - {item.title} (ID: {item.product_id}, Qty: {item.quantity})")
+            else:
+                print("Cart is now empty.")
+        else:
+            print("Failed to remove product from cart.")
+        
+        # Check cart summary after removal
+        updated_summary = get_cart_details_for_llm_context(user_id)
+        print(f"\nUpdated cart summary for LLM: {updated_summary}")
+    
+    print("\nCart service test completed.")

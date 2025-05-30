@@ -4,6 +4,7 @@ langchain
 langchain-community
 openai
 pinecone
-motor
 httpx
+langchain_openai
 python-dotenv
+pymongo
