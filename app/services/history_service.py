@@ -11,6 +11,7 @@ if __name__ == "__main__":
 
 from pymongo import DESCENDING, errors
 from pymongo.collection import Collection
+from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import (
     UserInteractionStored,
@@ -20,7 +21,7 @@ from app.models.schemas import (
 )
 from app.db.database import get_user_history_collection
 
-def log_interaction(
+async def log_interaction(
     user_id: str,
     interaction_type: str,
     details: Union[SearchInteractionDetail, ViewProductInteractionDetail, AddToCartInteractionDetail]
@@ -31,6 +32,19 @@ def log_interaction(
     Returns True if successful, False otherwise.
     """
     try:
+        # Input validation
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return False
+            
+        if not interaction_type or not isinstance(interaction_type, str):
+            print("Invalid interaction_type provided")
+            return False
+            
+        if not details:
+            print("No interaction details provided")
+            return False
+            
         collection: Collection = get_user_history_collection()
         # Build the interaction record using Pydantic
         interaction = UserInteractionStored(
@@ -40,8 +54,8 @@ def log_interaction(
         )
         # Convert to dict for insertion
         record: Dict[str, Any] = interaction.model_dump(mode="json")
-        # Insert into MongoDB
-        collection.insert_one(record)
+        # Insert into MongoDB asynchronously
+        await run_in_threadpool(collection.insert_one, record)
         return True
     except errors.PyMongoError as e:
         print(f"Error logging interaction for user {user_id}: {e}")
@@ -51,8 +65,7 @@ def log_interaction(
         return False
 
 
-
-def get_recent_history_summary(
+async def get_recent_history_summary(
     user_id: str,
     num_interactions: int = 3
 ) -> str:
@@ -62,15 +75,20 @@ def get_recent_history_summary(
     Returns an empty string if no history is found or on error.
     """
     try:
+        # Input validation
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return ""
+            
+        if not isinstance(num_interactions, int) or num_interactions <= 0:
+            print(f"Invalid num_interactions: {num_interactions}")
+            return ""
+            
         collection: Collection = get_user_history_collection()
-        # Retrieve most recent documents
-        cursor = (
-            collection
-            .find({"user_id": user_id})
-            .sort("timestamp", DESCENDING)
-            .limit(num_interactions)
-        )
-        docs: List[Dict[str, Any]] = list(cursor)
+        # Retrieve most recent documents asynchronously
+        cursor = collection.find({"user_id": user_id}).sort("timestamp", DESCENDING).limit(num_interactions)
+        docs: List[Dict[str, Any]] = await run_in_threadpool(list, cursor)
+        
         if not docs:
             return ""
 
@@ -118,16 +136,23 @@ if __name__ == "__main__":
     view_detail = ViewProductInteractionDetail(product_id=123, product_title="Gaming Laptop")
     add_to_cart_detail = AddToCartInteractionDetail(product_id=123, product_title="Gaming Laptop", quantity=1)
 
-    # Log interactions
-    print("Logging user interactions...")
-    search_success = log_interaction("user_1", "search", search_detail)
-    view_success = log_interaction("user_1", "view_product", view_detail)
-    cart_success = log_interaction("user_1", "add_to_cart", add_to_cart_detail)
+    # Use asyncio to run the async functions
+    import asyncio
     
-    print(f"Search interaction logged: {search_success}")
-    print(f"View product interaction logged: {view_success}")
-    print(f"Add to cart interaction logged: {cart_success}")
+    async def main():
+        # Log interactions
+        print("Logging user interactions...")
+        search_success = await log_interaction("user_1", "search", search_detail)
+        view_success = await log_interaction("user_1", "view_product", view_detail)
+        cart_success = await log_interaction("user_1", "add_to_cart", add_to_cart_detail)
+        
+        print(f"Search interaction logged: {search_success}")
+        print(f"View product interaction logged: {view_success}")
+        print(f"Add to cart interaction logged: {cart_success}")
 
-    # Get recent history summary
-    summary = get_recent_history_summary("user_1")
-    print(f"Recent History Summary: {summary}")
+        # Get recent history summary
+        summary = await get_recent_history_summary("user_1")
+        print(f"Recent History Summary: {summary}")
+    
+    # Run the main function
+    asyncio.run(main())

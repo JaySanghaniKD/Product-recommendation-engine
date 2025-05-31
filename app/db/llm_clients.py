@@ -44,7 +44,7 @@ def get_embedding_model() -> OpenAIEmbeddings:
         try:
             _embedding_model_instance = OpenAIEmbeddings(
                 openai_api_key=api_key,
-                model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+                model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
             )
             print("Initialized OpenAIEmbeddings model.")
         except Exception as e:
