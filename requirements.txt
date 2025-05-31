@@ -8,3 +8,4 @@ httpx
 langchain_openai
 python-dotenv
 pymongo
+uvicorn[standard]

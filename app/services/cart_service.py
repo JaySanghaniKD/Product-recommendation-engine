@@ -1,7 +1,7 @@
 # app/services/cart_service.py
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 # Add project root to Python path when running directly
@@ -12,12 +12,13 @@ if __name__ == "__main__":
 
 from pymongo import ReturnDocument, errors
 from pymongo.collection import Collection
+from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import UserCartStored, CartItem, ProductStored
 from app.db.database import get_carts_collection, get_products_collection
 
 
-def add_to_cart(
+async def add_to_cart(
     user_id: str,
     product_id: int,
     quantity: int = 1
@@ -28,11 +29,29 @@ def add_to_cart(
     Returns the updated UserCartStored or None on failure.
     """
     try:
+        # Input validation
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return None
+            
+        if not isinstance(product_id, int) or product_id <= 0:
+            print(f"Invalid product_id: {product_id}")
+            return None
+            
+        if not isinstance(quantity, int) or quantity <= 0:
+            print(f"Invalid quantity: {quantity}")
+            return None
+            
         carts_col: Collection = get_carts_collection()
         products_col: Collection = get_products_collection()
 
-        # Fetch product details
-        prod_doc = products_col.find_one({"id": product_id}, {"_id": 0, "id": 1, "title": 1, "price": 1, "thumbnail": 1})
+        # Wrap blocking MongoDB operations in run_in_threadpool
+        prod_doc = await run_in_threadpool(
+            products_col.find_one, 
+            {"id": product_id}, 
+            {"_id": 0, "id": 1, "title": 1, "price": 1, "thumbnail": 1}
+        )
+        
         if not prod_doc:
             print(f"Product {product_id} not found.")
             return None
@@ -46,12 +65,10 @@ def add_to_cart(
             quantity=quantity
         ).model_dump()
 
-        # Use datetime.now() with UTC timezone instead of deprecated utcnow()
-        from datetime import timezone
         current_time = datetime.now(timezone.utc)
 
         # Check if the user already has a cart
-        existing_cart = carts_col.find_one({"user_id": user_id})
+        existing_cart = await run_in_threadpool(carts_col.find_one, {"user_id": user_id})
 
         if existing_cart:
             # User has a cart, check if item exists in cart
@@ -63,7 +80,8 @@ def add_to_cart(
 
             if item_exists:
                 # Item exists, update quantity
-                updated_doc = carts_col.find_one_and_update(
+                updated_doc = await run_in_threadpool(
+                    carts_col.find_one_and_update,
                     {"user_id": user_id, "items.product_id": product_id},
                     {"$inc": {"items.$.quantity": quantity},
                      "$set": {"last_updated": current_time}},
@@ -71,7 +89,8 @@ def add_to_cart(
                 )
             else:
                 # Item doesn't exist, add it to the cart
-                updated_doc = carts_col.find_one_and_update(
+                updated_doc = await run_in_threadpool(
+                    carts_col.find_one_and_update,
                     {"user_id": user_id},
                     {"$push": {"items": cart_item},
                      "$set": {"last_updated": current_time}},
@@ -79,13 +98,18 @@ def add_to_cart(
                 )
         else:
             # Create a new cart with the item
-            updated_doc = carts_col.insert_one({
-                "user_id": user_id,
-                "items": [cart_item],
-                "last_updated": current_time
-            })
-            if updated_doc.inserted_id:
-                updated_doc = carts_col.find_one({"_id": updated_doc.inserted_id})
+            result = await run_in_threadpool(
+                carts_col.insert_one,
+                {
+                    "user_id": user_id,
+                    "items": [cart_item],
+                    "last_updated": current_time
+                }
+            )
+            if result.inserted_id:
+                updated_doc = await run_in_threadpool(carts_col.find_one, {"_id": result.inserted_id})
+            else:
+                updated_doc = None
 
         if not updated_doc:
             return None
@@ -101,15 +125,19 @@ def add_to_cart(
         return None
 
 
-
-def get_cart(user_id: str) -> Optional[UserCartStored]:
+async def get_cart(user_id: str) -> Optional[UserCartStored]:
     """
     Retrieves the current shopping cart for a given user.
     Returns None if no cart exists or on error.
     """
     try:
+        # Input validation
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return None
+            
         carts_col: Collection = get_carts_collection()
-        cart_doc = carts_col.find_one({"user_id": user_id})
+        cart_doc = await run_in_threadpool(carts_col.find_one, {"user_id": user_id})
         if not cart_doc:
             return None
         return UserCartStored.model_validate(cart_doc)
@@ -121,22 +149,46 @@ def get_cart(user_id: str) -> Optional[UserCartStored]:
         return None
 
 
-
-def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartStored]:
+async def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartStored]:
     """
     Removes a specific product entirely from a user's cart.
     Returns the updated UserCartStored or None on failure.
     """
     try:
+        # Input validation
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return None
+            
+        if not isinstance(product_id, int) or product_id <= 0:
+            print(f"Invalid product_id: {product_id}")
+            return None
+            
         carts_col: Collection = get_carts_collection()
-        updated_doc = carts_col.find_one_and_update(
+        current_time = datetime.now(timezone.utc)
+        
+        # First check if the cart and item exist
+        cart = await run_in_threadpool(carts_col.find_one, {
+            "user_id": user_id,
+            "items.product_id": product_id
+        })
+        
+        if not cart:
+            print(f"No cart found for user {user_id} or product {product_id} not in cart")
+            return None
+        
+        # Remove the item
+        updated_doc = await run_in_threadpool(
+            carts_col.find_one_and_update,
             {"user_id": user_id},
             {"$pull": {"items": {"product_id": product_id}},
-             "$set": {"last_updated": datetime.utcnow()}},
+             "$set": {"last_updated": current_time}},
             return_document=ReturnDocument.AFTER
         )
+        
         if not updated_doc:
             return None
+            
         return UserCartStored.model_validate(updated_doc)
     except errors.PyMongoError as e:
         print(f"MongoDB error in remove_from_cart: {e}")
@@ -146,13 +198,88 @@ def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartStored]:
         return None
 
 
+async def clear_cart(user_id: str) -> Optional[UserCartStored]:
+    """
+    Removes all items from a user's cart but keeps the cart document.
+    Returns the updated empty UserCartStored or None on failure.
+    """
+    try:
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return None
+            
+        carts_col: Collection = get_carts_collection()
+        current_time = datetime.now(timezone.utc)
+        
+        # Empty the items array and update timestamp
+        updated_doc = await run_in_threadpool(
+            carts_col.find_one_and_update,
+            {"user_id": user_id},
+            {"$set": {"items": [], "last_updated": current_time}},
+            return_document=ReturnDocument.AFTER
+        )
+        
+        if not updated_doc:
+            print(f"No cart found for user {user_id}")
+            return None
+            
+        return UserCartStored.model_validate(updated_doc)
+    except errors.PyMongoError as e:
+        print(f"MongoDB error in clear_cart: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error in clear_cart: {e}")
+        return None
 
-def get_cart_details_for_llm_context(user_id: str) -> str:
+
+async def delete_cart(user_id: str) -> bool:
+    """
+    Completely removes a user's cart document from the database.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        if not user_id or not isinstance(user_id, str):
+            print("Invalid user_id provided")
+            return False
+            
+        carts_col: Collection = get_carts_collection()
+        
+        # Check if cart exists
+        cart_exists = await run_in_threadpool(
+            lambda: carts_col.count_documents({"user_id": user_id}) > 0
+        )
+        
+        if not cart_exists:
+            print(f"No cart found for user {user_id}")
+            return False
+        
+        # Delete the cart
+        result = await run_in_threadpool(
+            carts_col.delete_one,
+            {"user_id": user_id}
+        )
+        
+        if result.deleted_count == 1:
+            print(f"Cart for user {user_id} successfully deleted")
+            return True
+        else:
+            print(f"Failed to delete cart for user {user_id}")
+            return False
+            
+    except errors.PyMongoError as e:
+        print(f"MongoDB error in delete_cart: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error in delete_cart: {e}")
+        return False
+
+
+async def get_cart_details_for_llm_context(user_id: str) -> str:
     """
     Fetches the user's cart and returns a concise string summary for LLM prompts.
     """
     try:
-        cart = get_cart(user_id)
+        cart = await get_cart(user_id)
         if not cart or not cart.items:
             return "User's cart is empty."
 
