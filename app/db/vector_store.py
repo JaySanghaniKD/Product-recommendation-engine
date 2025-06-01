@@ -1,7 +1,11 @@
 import os
+import logging
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from typing import Optional
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -20,9 +24,11 @@ def init_pinecone_client() -> None:
         index_name = os.getenv("PINECONE_CATEGORY_INDEX_NAME") or os.getenv("PINECONE_INDEX_NAME")
         
         if not api_key or not index_name:
+            logger.error("PINECONE_API_KEY and PINECONE_CATEGORY_INDEX_NAME or PINECONE_INDEX_NAME must be set.")
             raise ValueError("PINECONE_API_KEY and PINECONE_CATEGORY_INDEX_NAME or PINECONE_INDEX_NAME must be set.")
         
         try:
+            logger.info(f"Initializing Pinecone client with index {index_name}")
             # Create Pinecone client with the new API
             _pinecone_client = Pinecone(api_key=api_key)
             
@@ -32,9 +38,9 @@ def init_pinecone_client() -> None:
             # Verify index readiness
             stats = _category_pinecone_index.describe_index_stats()
             total_vectors = stats.get('total_vector_count', 0)
-            print(f"Connected to Pinecone index '{index_name}'. Stats: {{'total_vectors': {total_vectors}}}")
+            logger.info(f"Connected to Pinecone index '{index_name}' with {total_vectors} vectors")
         except Exception as e:
-            print(f"Failed to initialize Pinecone client or index: {e}")
+            logger.error(f"Failed to initialize Pinecone client or index: {e}", exc_info=True)
             raise
 
 

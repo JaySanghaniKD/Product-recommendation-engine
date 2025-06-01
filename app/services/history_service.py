@@ -2,6 +2,10 @@ from datetime import datetime
 from typing import List, Optional, Union, Dict, Any
 import os
 import sys
+import logging
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 # Handle imports when run directly
 if __name__ == "__main__":
@@ -34,16 +38,18 @@ async def log_interaction(
     try:
         # Input validation
         if not user_id or not isinstance(user_id, str):
-            print("Invalid user_id provided")
+            logger.warning("Invalid user_id provided")
             return False
             
         if not interaction_type or not isinstance(interaction_type, str):
-            print("Invalid interaction_type provided")
+            logger.warning("Invalid interaction_type provided")
             return False
             
         if not details:
-            print("No interaction details provided")
+            logger.warning("No interaction details provided")
             return False
+        
+        logger.info(f"Logging {interaction_type} interaction for user {user_id}")
             
         collection: Collection = get_user_history_collection()
         # Build the interaction record using Pydantic
@@ -56,12 +62,13 @@ async def log_interaction(
         record: Dict[str, Any] = interaction.model_dump(mode="json")
         # Insert into MongoDB asynchronously
         await run_in_threadpool(collection.insert_one, record)
+        logger.debug(f"Successfully logged {interaction_type} interaction for user {user_id}")
         return True
     except errors.PyMongoError as e:
-        print(f"Error logging interaction for user {user_id}: {e}")
+        logger.error(f"Error logging interaction for user {user_id}: {e}", exc_info=True)
         return False
     except Exception as e:
-        print(f"Unexpected error in log_interaction: {e}")
+        logger.error(f"Unexpected error in log_interaction: {e}", exc_info=True)
         return False
 
 

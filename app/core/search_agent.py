@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any, Set
+import logging
 
 from fastapi.concurrency import run_in_threadpool
 from app.services.history_service import get_recent_history_summary
@@ -24,6 +25,9 @@ import pinecone
 import os
 from dotenv import load_dotenv
 
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 # Configure LangSmith tracing
@@ -34,15 +38,15 @@ endpoint = os.getenv("LANGCHAIN_ENDPOINT", "")
 if endpoint.startswith("https_"):
     corrected_endpoint = endpoint.replace("https_", "https://")
     os.environ["LANGCHAIN_ENDPOINT"] = corrected_endpoint
-    print(f"Corrected LANGCHAIN_ENDPOINT from '{endpoint}' to '{corrected_endpoint}'")
+    logger.info(f"Corrected LANGCHAIN_ENDPOINT from '{endpoint}' to '{corrected_endpoint}'")
 
 # Check if required LangSmith environment variables are set
 if not os.getenv("LANGCHAIN_API_KEY"):
-    print("Warning: LANGCHAIN_API_KEY not found in environment. LangSmith tracing may not work.")
+    logger.warning("LANGCHAIN_API_KEY not found in environment. LangSmith tracing may not work.")
 if not os.getenv("LANGCHAIN_PROJECT"):
     default_project = "genai-shopping-assistant"
     os.environ["LANGCHAIN_PROJECT"] = default_project
-    print(f"LANGCHAIN_PROJECT not set, defaulting to: {default_project}")
+    logger.info(f"LANGCHAIN_PROJECT not set, defaulting to: {default_project}")
 
 
 async def refine_query_with_llm1(
@@ -55,6 +59,7 @@ async def refine_query_with_llm1(
     filter criteria, and a user intent summary as structured output.
     """
     try:
+        logger.debug(f"Starting LLM query refinement for: '{raw_query}'")
         llm = get_llm_client()
         output_parser = PydanticOutputParser(pydantic_object=LLMQueryAnalysisOutput)
         
@@ -114,11 +119,12 @@ async def refine_query_with_llm1(
             "user_cart_summary": user_cart_summary,
         })
         
-        print(f"LLMQueryAnalysisOutput: {response.model_dump_json(indent=2)}")
+        logger.info(f"LLMQueryAnalysisOutput: {response.model_dump_json(indent=2)}")
         return response
     except Exception as e:
-        print(f"Error in refine_query_with_llm1: {e}")
+        logger.error(f"Error in refine_query_with_llm1: {e}", exc_info=True)
         # Provide a fallback response when LLM fails
+        logger.info("Using fallback response for query analysis")
         return LLMQueryAnalysisOutput(
             descriptive_category_phrases=[raw_query.strip()],
             filter_criteria={
@@ -136,6 +142,7 @@ async def match_semantic_categories(
     Embeds descriptive phrases and queries the Pinecone category index to return matched categories.
     """
     try:
+        logger.debug(f"Matching semantic categories for phrases: {descriptive_category_phrases}")
         embedding_model = get_embedding_model()
         category_index = get_pinecone_category_index()
         matched: Set[str] = set()
@@ -151,9 +158,10 @@ async def match_semantic_categories(
                 name = match.metadata.get("category_name")
                 if name:
                     matched.add(name)
+        logger.info(f"Matched categories: {list(matched)}")
         return list(matched)
     except Exception as e:
-        print(f"Error in match_semantic_categories: {e}")
+        logger.error(f"Error in match_semantic_categories: {e}", exc_info=True)
         return []
 
 
@@ -167,7 +175,7 @@ async def _trigger_fallback_search(
     If that fails, falls back to category-only search.
     """
     try:
-        print("Triggering fallback search...")
+        logger.info("Triggering fallback search...")
         fallback_results: List[ProductStored] = []
         
         # Step 1: Try text search with keywords if available
@@ -177,6 +185,7 @@ async def _trigger_fallback_search(
             try:
                 # Attempt keyword-based search
                 search_string = " ".join(keywords)
+                logger.debug(f"Attempting keyword-based search with: {search_string}")
                 mongo_fallback_query = {"$text": {"$search": search_string}}
                 cursor = products_collection.find(mongo_fallback_query).limit(fallback_candidate_limit)
                 docs = await run_in_threadpool(list, cursor)
@@ -185,12 +194,12 @@ async def _trigger_fallback_search(
                     try:
                         fallback_results.append(ProductStored.model_validate(doc))
                     except Exception as e:
-                        print(f"Error parsing product: {e}")
+                        logger.warning(f"Error parsing product: {e}")
                         continue
                 
-                print(f"Keyword-based fallback search found {len(fallback_results)} candidates.")
+                logger.info(f"Keyword-based fallback search found {len(fallback_results)} candidates.")
             except Exception as e:
-                print(f"Keyword-based search failed: {e}")
+                logger.warning(f"Keyword-based search failed: {e}")
         
         # Step 2: If no results from keywords, try category-only search
         if not fallback_results and llm_analysis.descriptive_category_phrases:
@@ -204,6 +213,7 @@ async def _trigger_fallback_search(
                 
                 if potential_categories:
                     # Try to match against category field directly
+                    logger.debug(f"Attempting category-only search with: {potential_categories}")
                     category_query = {"category": {"$in": potential_categories}}
                     cursor = products_collection.find(category_query).limit(fallback_candidate_limit)
                     docs = await run_in_threadpool(list, cursor)
@@ -212,17 +222,17 @@ async def _trigger_fallback_search(
                         try:
                             fallback_results.append(ProductStored.model_validate(doc))
                         except Exception as e:
-                            print(f"Error parsing product: {e}")
+                            logger.warning(f"Error parsing product: {e}")
                             continue
                     
-                    print(f"Category-only fallback search found {len(fallback_results)} candidates.")
+                    logger.info(f"Category-only fallback search found {len(fallback_results)} candidates.")
             except Exception as e:
-                print(f"Category-only search failed: {e}")
+                logger.warning(f"Category-only search failed: {e}")
         
         # Step 3: Last resort - just get some products from the database
         if not fallback_results:
             try:
-                print("Attempting last-resort fallback to return any available products")
+                logger.info("Attempting last-resort fallback to return any available products")
                 # Just get some products to show something to the user
                 cursor = products_collection.find({}).limit(fallback_candidate_limit)
                 docs = await run_in_threadpool(list, cursor)
@@ -231,16 +241,16 @@ async def _trigger_fallback_search(
                     try:
                         fallback_results.append(ProductStored.model_validate(doc))
                     except Exception as e:
-                        print(f"Error parsing product: {e}")
+                        logger.warning(f"Error parsing product: {e}")
                         continue
                 
-                print(f"Last-resort fallback search found {len(fallback_results)} candidates.")
+                logger.info(f"Last-resort fallback search found {len(fallback_results)} candidates.")
             except Exception as e:
-                print(f"Last-resort search failed: {e}")
+                logger.warning(f"Last-resort search failed: {e}")
         
         return fallback_results
     except Exception as e:
-        print(f"Error in _trigger_fallback_search: {e}")
+        logger.error(f"Error in _trigger_fallback_search: {e}", exc_info=True)
         return []
 
 async def retrieve_candidates_from_mongodb(
@@ -253,6 +263,7 @@ async def retrieve_candidates_from_mongodb(
     Uses a progressive fallback strategy if initial queries return no results.
     """
     try:
+        logger.debug(f"Retrieving candidates with categories: {matched_categories}, filters: {filter_criteria}")
         products_col = get_products_collection()
         results: List[ProductStored] = []
         
@@ -286,6 +297,7 @@ async def retrieve_candidates_from_mongodb(
                     try:
                         text_query = {"$text": {"$search": " ".join(keywords)}}
                         full_query = {**mongo_query, **text_query}
+                        logger.debug(f"Executing text search query: {full_query}")
                         
                         cursor = products_col.find(full_query).limit(candidate_limit)
                         docs = await run_in_threadpool(list, cursor)
@@ -293,12 +305,13 @@ async def retrieve_candidates_from_mongodb(
                         for doc in docs:
                             try:
                                 results.append(ProductStored.model_validate(doc))
-                            except Exception:
+                            except Exception as e:
+                                logger.warning(f"Error parsing product: {e}")
                                 continue
                         
-                        print(f"Query with text search found {len(results)} products")
+                        logger.info(f"Query with text search found {len(results)} products")
                     except Exception as e:
-                        print(f"Text search query failed: {e}")
+                        logger.warning(f"Text search query failed: {e}")
             
             # Step 2: If no results with text search, try without text search
             if not results and mongo_query:
@@ -307,39 +320,43 @@ async def retrieve_candidates_from_mongodb(
                     if "$text" in mongo_query:
                         del mongo_query["$text"]
                     
+                    logger.debug(f"Executing non-text query: {mongo_query}")
                     cursor = products_col.find(mongo_query).limit(candidate_limit)
                     docs = await run_in_threadpool(list, cursor)
                     
                     for doc in docs:
                         try:
                             results.append(ProductStored.model_validate(doc))
-                        except Exception:
+                        except Exception as e:
+                            logger.warning(f"Error parsing product: {e}")
                             continue
                     
-                    print(f"Query without text search found {len(results)} products")
+                    logger.info(f"Query without text search found {len(results)} products")
                 except Exception as e:
-                    print(f"Non-text query failed: {e}")
+                    logger.warning(f"Non-text query failed: {e}")
         
         # Step 3: If still no results, use just the category
         if not results and matched_categories:
             try:
                 mongo_query = {"category": {"$in": matched_categories}}
+                logger.debug(f"Executing category-only query: {mongo_query}")
                 cursor = products_col.find(mongo_query).limit(candidate_limit)
                 docs = await run_in_threadpool(list, cursor)
                 
                 for doc in docs:
                     try:
                         results.append(ProductStored.model_validate(doc))
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Error parsing product: {e}")
                         continue
                 
-                print(f"Category-only query found {len(results)} products")
+                logger.info(f"Category-only query found {len(results)} products")
             except Exception as e:
-                print(f"Category-only query failed: {e}")
+                logger.warning(f"Category-only query failed: {e}")
         
         return results
     except Exception as e:
-        print(f"Error in retrieve_candidates_from_mongodb: {e}")
+        logger.error(f"Error in retrieve_candidates_from_mongodb: {e}", exc_info=True)
         return []
 
 async def rerank_and_select_products_with_llm2(
@@ -353,9 +370,10 @@ async def rerank_and_select_products_with_llm2(
     Uses an LLM to re-rank candidate products, select top N, and provide justifications.
     """
     if not candidate_products:
-        print("No candidate products to re-rank.")
+        logger.warning("No candidate products to re-rank.")
         return None
     try:
+        logger.debug(f"Re-ranking {len(candidate_products)} candidate products")
         llm = get_llm_client()
         output_parser = PydanticOutputParser(pydantic_object=LLMFinalProductSelectionOutput)
 
@@ -442,10 +460,10 @@ async def rerank_and_select_products_with_llm2(
             "format_instructions": format_instructions
         })
         
-        print(f"LLMFinalProductSelectionOutput: {response.model_dump_json(indent=2)}")
+        logger.info(f"LLMFinalProductSelectionOutput: {response.model_dump_json(indent=2)}")
         return response
     except Exception as e:
-        print(f"Error in rerank_and_select_products_with_llm2: {e}")
+        logger.error(f"Error in rerank_and_select_products_with_llm2: {e}", exc_info=True)
         return None
 
 async def run_search_pipeline(
@@ -455,13 +473,13 @@ async def run_search_pipeline(
     """
     Full search pipeline orchestration from context gathering through final response preparation.
     """
-    print(f"Starting search pipeline for user {user_id} and query '{raw_query}'")
+    logger.info(f"Starting search pipeline for user {user_id} and query '{raw_query}'")
 
     # Step 6.1: Gather user context
     user_history_summary = await get_recent_history_summary(user_id=user_id, num_interactions=3)
-    print(f"Retrieved user history summary: {user_history_summary}")
+    logger.info(f"Retrieved user history summary: {user_history_summary}")
     user_cart_summary = await get_cart_details_for_llm_context(user_id=user_id)
-    print(f"Retrieved user cart summary: {user_cart_summary}")
+    logger.info(f"Retrieved user cart summary: {user_cart_summary}")
 
     # Step 6.2: LLM Query Refinement & Feature Extraction
     llm_analysis_output = await refine_query_with_llm1(
@@ -470,15 +488,16 @@ async def run_search_pipeline(
         user_cart_summary=user_cart_summary,
     )
     if not llm_analysis_output:
+        logger.error("LLM query analysis failed to return results")
         return {"search_results": [], "message": "Failed to analyze query with LLM. Please try again."}
-    print(f"LLM analysis output: {llm_analysis_output.model_dump_json(indent=2)}")
+    logger.info(f"LLM analysis output: {llm_analysis_output.model_dump_json(indent=2)}")
 
     # Step 6.3: Semantic Category Matching
     matched_categories = await match_semantic_categories(
         descriptive_category_phrases=llm_analysis_output.descriptive_category_phrases,
         top_k_categories=1
     )
-    print(f"Matched categories: {matched_categories}")
+    logger.info(f"Matched categories: {matched_categories}")
 
     # Step 6.4: MongoDB Candidate Retrieval
     candidate_products = await retrieve_candidates_from_mongodb(
@@ -486,12 +505,12 @@ async def run_search_pipeline(
         filter_criteria=llm_analysis_output.filter_criteria,
         candidate_limit=20
     )
-    print(f"Retrieved {len(candidate_products)} candidate products from MongoDB.")
+    logger.info(f"Retrieved {len(candidate_products)} candidate products from MongoDB.")
 
     # Step 6.5: Automated Fallback Search Logic
     MIN_CANDIDATES_BEFORE_FALLBACK = 5
     if len(candidate_products) < MIN_CANDIDATES_BEFORE_FALLBACK:
-        print(f"Initial candidate count ({len(candidate_products)}) is below threshold ({MIN_CANDIDATES_BEFORE_FALLBACK}). Triggering fallback search.")
+        logger.info(f"Initial candidate count ({len(candidate_products)}) is below threshold ({MIN_CANDIDATES_BEFORE_FALLBACK}). Triggering fallback search.")
         products_collection_instance = get_products_collection()
         fallback_candidates = await _trigger_fallback_search(
             llm_analysis=llm_analysis_output,
@@ -499,13 +518,13 @@ async def run_search_pipeline(
             fallback_candidate_limit=20
         )
         if fallback_candidates:
-            print(f"Fallback search found {len(fallback_candidates)} candidates. Using fallback results.")
+            logger.info(f"Fallback search found {len(fallback_candidates)} candidates. Using fallback results.")
             candidate_products = fallback_candidates
         else:
-            print("Fallback search found no new candidates.")
+            logger.info("Fallback search found no new candidates.")
     else:
-        print(f"Initial candidate count ({len(candidate_products)}) is sufficient. No fallback triggered.")
-    print(f"Proceeding with {len(candidate_products)} candidate products after fallback check.")
+        logger.info(f"Initial candidate count ({len(candidate_products)}) is sufficient. No fallback triggered.")
+    logger.info(f"Proceeding with {len(candidate_products)} candidate products after fallback check.")
 
     # Step 6.6: LLM Product-Level Re-ranking & Response Generation
     final_selection_output = await rerank_and_select_products_with_llm2(
@@ -520,7 +539,7 @@ async def run_search_pipeline(
         api_search_results = []
         message = "Could not refine product selection with LLM."
         return {"query_received": raw_query, "user_id": user_id, "search_results": api_search_results, "message": message}
-    print(f"Final selection: {final_selection_output.model_dump_json(indent=2)}")
+    logger.info(f"Final selection: {final_selection_output.model_dump_json(indent=2)}")
 
     # Step 6.7: Logging Search Interaction
     try:
@@ -540,9 +559,9 @@ async def run_search_pipeline(
             interaction_type="search",
             details=interaction_details
         )
-        print(f"Search interaction logged for user {user_id}")
+        logger.info(f"Search interaction logged for user {user_id}")
     except Exception as e:
-        print(f"Error logging search interaction for user {user_id}: {e}")
+        logger.error(f"Error logging search interaction for user {user_id}: {e}", exc_info=True)
 
     # Step 6.8: Preparing Final API Response
     api_search_results: List[Dict[str, Any]] = []

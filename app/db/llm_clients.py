@@ -1,8 +1,12 @@
 import os
+import logging
 from dotenv import load_dotenv
 from typing import Optional
 from langchain_openai.chat_models import ChatOpenAI
 from langchain_openai.embeddings import OpenAIEmbeddings
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -18,16 +22,20 @@ def get_llm_client() -> ChatOpenAI:
     if _llm_client_instance is None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
+            logger.error("OPENAI_API_KEY must be set in environment variables.")
             raise ValueError("OPENAI_API_KEY must be set in environment variables.")
         try:
+            model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
+            temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+            logger.info(f"Initializing ChatOpenAI LLM client with model {model_name}, temperature {temperature}")
             _llm_client_instance = ChatOpenAI(
                 openai_api_key=api_key,
-                model_name=os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo"),
-                temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+                model_name=model_name,
+                temperature=temperature
             )
-            print("Initialized ChatOpenAI LLM client.")
+            logger.debug("ChatOpenAI LLM client successfully initialized")
         except Exception as e:
-            print(f"Failed to initialize ChatOpenAI client: {e}")
+            logger.error(f"Failed to initialize ChatOpenAI client: {e}", exc_info=True)
             raise
     return _llm_client_instance
 
@@ -40,15 +48,18 @@ def get_embedding_model() -> OpenAIEmbeddings:
     if _embedding_model_instance is None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
+            logger.error("OPENAI_API_KEY must be set in environment variables.")
             raise ValueError("OPENAI_API_KEY must be set in environment variables.")
         try:
+            model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+            logger.info(f"Initializing OpenAIEmbeddings with model {model}")
             _embedding_model_instance = OpenAIEmbeddings(
                 openai_api_key=api_key,
-                model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+                model=model
             )
-            print("Initialized OpenAIEmbeddings model.")
+            logger.debug("OpenAIEmbeddings model successfully initialized")
         except Exception as e:
-            print(f"Failed to initialize OpenAIEmbeddings: {e}")
+            logger.error(f"Failed to initialize OpenAIEmbeddings: {e}", exc_info=True)
             raise
     return _embedding_model_instance
 

@@ -1,9 +1,13 @@
 import os
 import ssl
+import logging
 from dotenv import load_dotenv
 from pymongo import MongoClient, errors
 from pymongo.database import Database, Collection
 from typing import Optional
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -21,6 +25,7 @@ def connect_to_mongo() -> None:
         mongo_uri = os.getenv("MONGO_URI")
         db_name = os.getenv("MONGO_DB_NAME")
         if not mongo_uri or not db_name:
+            logger.error("MONGO_URI and MONGO_DB_NAME must be set in environment variables.")
             raise ValueError("MONGO_URI and MONGO_DB_NAME must be set in environment variables.")
         try:
             # Configure SSL context for MongoDB connection
@@ -29,13 +34,14 @@ def connect_to_mongo() -> None:
                 'tlsAllowInvalidCertificates': True  
             }
             
+            logger.info(f"Connecting to MongoDB at {mongo_uri}, database: {db_name}")
             _db_client = MongoClient(mongo_uri, **ssl_settings)
             # The ismaster command is cheap and does not require auth.
             _db_client.admin.command('ismaster')
             _database = _db_client[db_name]
-            print(f"Successfully connected to MongoDB at {mongo_uri}, database: {db_name}")
+            logger.info(f"Successfully connected to MongoDB")
         except errors.ConnectionFailure as e:
-            print(f"Failed to connect to MongoDB: {e}")
+            logger.error(f"Failed to connect to MongoDB: {e}", exc_info=True)
             raise
 
 

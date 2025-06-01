@@ -1,8 +1,12 @@
 # app/services/cart_service.py
 import os
 import sys
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 # Add project root to Python path when running directly
 if __name__ == "__main__":
@@ -31,16 +35,18 @@ async def add_to_cart(
     try:
         # Input validation
         if not user_id or not isinstance(user_id, str):
-            print("Invalid user_id provided")
+            logger.warning("Invalid user_id provided")
             return None
             
         if not isinstance(product_id, int) or product_id <= 0:
-            print(f"Invalid product_id: {product_id}")
+            logger.warning(f"Invalid product_id: {product_id}")
             return None
             
         if not isinstance(quantity, int) or quantity <= 0:
-            print(f"Invalid quantity: {quantity}")
+            logger.warning(f"Invalid quantity: {quantity}")
             return None
+        
+        logger.info(f"Adding product {product_id} (qty: {quantity}) to cart for user {user_id}")
             
         carts_col: Collection = get_carts_collection()
         products_col: Collection = get_products_collection()
@@ -53,7 +59,7 @@ async def add_to_cart(
         )
         
         if not prod_doc:
-            print(f"Product {product_id} not found.")
+            logger.warning(f"Product {product_id} not found.")
             return None
             
         # Build cart item data dict
@@ -115,13 +121,14 @@ async def add_to_cart(
             return None
 
         # Parse into Pydantic model
+        logger.debug(f"Successfully updated cart for user {user_id}")
         return UserCartStored.model_validate(updated_doc)
 
     except errors.PyMongoError as e:
-        print(f"MongoDB error in add_to_cart: {e}")
+        logger.error(f"MongoDB error in add_to_cart: {e}", exc_info=True)
         return None
     except Exception as e:
-        print(f"Unexpected error in add_to_cart: {e}")
+        logger.error(f"Unexpected error in add_to_cart: {e}", exc_info=True)
         return None
 
 
@@ -133,7 +140,7 @@ async def get_cart(user_id: str) -> Optional[UserCartStored]:
     try:
         # Input validation
         if not user_id or not isinstance(user_id, str):
-            print("Invalid user_id provided")
+            logger.warning("Invalid user_id provided")
             return None
             
         carts_col: Collection = get_carts_collection()
@@ -142,10 +149,10 @@ async def get_cart(user_id: str) -> Optional[UserCartStored]:
             return None
         return UserCartStored.model_validate(cart_doc)
     except errors.PyMongoError as e:
-        print(f"MongoDB error in get_cart: {e}")
+        logger.error(f"MongoDB error in get_cart: {e}", exc_info=True)
         return None
     except Exception as e:
-        print(f"Unexpected error in get_cart: {e}")
+        logger.error(f"Unexpected error in get_cart: {e}", exc_info=True)
         return None
 
 
@@ -157,11 +164,11 @@ async def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartSt
     try:
         # Input validation
         if not user_id or not isinstance(user_id, str):
-            print("Invalid user_id provided")
+            logger.warning("Invalid user_id provided")
             return None
             
         if not isinstance(product_id, int) or product_id <= 0:
-            print(f"Invalid product_id: {product_id}")
+            logger.warning(f"Invalid product_id: {product_id}")
             return None
             
         carts_col: Collection = get_carts_collection()
@@ -174,7 +181,7 @@ async def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartSt
         })
         
         if not cart:
-            print(f"No cart found for user {user_id} or product {product_id} not in cart")
+            logger.warning(f"No cart found for user {user_id} or product {product_id} not in cart")
             return None
         
         # Remove the item
@@ -191,10 +198,10 @@ async def remove_from_cart(user_id: str, product_id: int) -> Optional[UserCartSt
             
         return UserCartStored.model_validate(updated_doc)
     except errors.PyMongoError as e:
-        print(f"MongoDB error in remove_from_cart: {e}")
+        logger.error(f"MongoDB error in remove_from_cart: {e}", exc_info=True)
         return None
     except Exception as e:
-        print(f"Unexpected error in remove_from_cart: {e}")
+        logger.error(f"Unexpected error in remove_from_cart: {e}", exc_info=True)
         return None
 
 
@@ -205,7 +212,7 @@ async def clear_cart(user_id: str) -> Optional[UserCartStored]:
     """
     try:
         if not user_id or not isinstance(user_id, str):
-            print("Invalid user_id provided")
+            logger.warning("Invalid user_id provided")
             return None
             
         carts_col: Collection = get_carts_collection()
@@ -220,15 +227,15 @@ async def clear_cart(user_id: str) -> Optional[UserCartStored]:
         )
         
         if not updated_doc:
-            print(f"No cart found for user {user_id}")
+            logger.warning(f"No cart found for user {user_id}")
             return None
             
         return UserCartStored.model_validate(updated_doc)
     except errors.PyMongoError as e:
-        print(f"MongoDB error in clear_cart: {e}")
+        logger.error(f"MongoDB error in clear_cart: {e}", exc_info=True)
         return None
     except Exception as e:
-        print(f"Unexpected error in clear_cart: {e}")
+        logger.error(f"Unexpected error in clear_cart: {e}", exc_info=True)
         return None
 
 
@@ -239,7 +246,7 @@ async def delete_cart(user_id: str) -> bool:
     """
     try:
         if not user_id or not isinstance(user_id, str):
-            print("Invalid user_id provided")
+            logger.warning("Invalid user_id provided")
             return False
             
         carts_col: Collection = get_carts_collection()
@@ -250,7 +257,7 @@ async def delete_cart(user_id: str) -> bool:
         )
         
         if not cart_exists:
-            print(f"No cart found for user {user_id}")
+            logger.warning(f"No cart found for user {user_id}")
             return False
         
         # Delete the cart
@@ -260,17 +267,17 @@ async def delete_cart(user_id: str) -> bool:
         )
         
         if result.deleted_count == 1:
-            print(f"Cart for user {user_id} successfully deleted")
+            logger.info(f"Cart for user {user_id} successfully deleted")
             return True
         else:
-            print(f"Failed to delete cart for user {user_id}")
+            logger.warning(f"Failed to delete cart for user {user_id}")
             return False
             
     except errors.PyMongoError as e:
-        print(f"MongoDB error in delete_cart: {e}")
+        logger.error(f"MongoDB error in delete_cart: {e}", exc_info=True)
         return False
     except Exception as e:
-        print(f"Unexpected error in delete_cart: {e}")
+        logger.error(f"Unexpected error in delete_cart: {e}", exc_info=True)
         return False
 
 
@@ -289,7 +296,7 @@ async def get_cart_details_for_llm_context(user_id: str) -> str:
 
         return f"User's cart contains: {', '.join(summary_items)}."
     except Exception as e:
-        print(f"Error generating cart summary for user {user_id}: {e}")
+        logger.error(f"Error generating cart summary for user {user_id}: {e}", exc_info=True)
         return ""
 
 # Example usage
