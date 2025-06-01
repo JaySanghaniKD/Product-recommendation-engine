@@ -164,33 +164,84 @@ async def _trigger_fallback_search(
 ) -> List[ProductStored]:
     """
     Performs a broader text search using keywords extracted by the LLM if initial search yields few results.
-    Requires a text index on title, description, or tags in MongoDB for $text search to work.
+    If that fails, falls back to category-only search.
     """
     try:
         print("Triggering fallback search...")
+        fallback_results: List[ProductStored] = []
+        
+        # Step 1: Try text search with keywords if available
         criteria = llm_analysis.filter_criteria or {}
         keywords = criteria.get("keywords_for_db_search")
-        if not keywords:
-            print("No keywords available for fallback search.")
-            return []
-        # Construct text search query (requires pre-existing text index)
-        search_string = " ".join(keywords)
-        mongo_fallback_query = {"$text": {"$search": search_string}}
-        cursor = products_collection.find(mongo_fallback_query).limit(fallback_candidate_limit)
-        docs = await run_in_threadpool(list, cursor)
-        fallback_results: List[ProductStored] = []
-        for doc in docs:
+        if keywords:
             try:
-                fallback_results.append(ProductStored.model_validate(doc))
-            except Exception:
-                continue
-        print(f"Fallback search found {len(fallback_results)} candidates.")
+                # Attempt keyword-based search
+                search_string = " ".join(keywords)
+                mongo_fallback_query = {"$text": {"$search": search_string}}
+                cursor = products_collection.find(mongo_fallback_query).limit(fallback_candidate_limit)
+                docs = await run_in_threadpool(list, cursor)
+                
+                for doc in docs:
+                    try:
+                        fallback_results.append(ProductStored.model_validate(doc))
+                    except Exception as e:
+                        print(f"Error parsing product: {e}")
+                        continue
+                
+                print(f"Keyword-based fallback search found {len(fallback_results)} candidates.")
+            except Exception as e:
+                print(f"Keyword-based search failed: {e}")
+        
+        # Step 2: If no results from keywords, try category-only search
+        if not fallback_results and llm_analysis.descriptive_category_phrases:
+            try:
+                # Extract potential category terms from the descriptive phrases
+                potential_categories = []
+                for phrase in llm_analysis.descriptive_category_phrases:
+                    # Split phrases and take words that might be categories
+                    words = phrase.lower().split()
+                    potential_categories.extend([w for w in words if len(w) > 3 and w not in ["with", "for", "that", "have", "from"]])
+                
+                if potential_categories:
+                    # Try to match against category field directly
+                    category_query = {"category": {"$in": potential_categories}}
+                    cursor = products_collection.find(category_query).limit(fallback_candidate_limit)
+                    docs = await run_in_threadpool(list, cursor)
+                    
+                    for doc in docs:
+                        try:
+                            fallback_results.append(ProductStored.model_validate(doc))
+                        except Exception as e:
+                            print(f"Error parsing product: {e}")
+                            continue
+                    
+                    print(f"Category-only fallback search found {len(fallback_results)} candidates.")
+            except Exception as e:
+                print(f"Category-only search failed: {e}")
+        
+        # Step 3: Last resort - just get some products from the database
+        if not fallback_results:
+            try:
+                print("Attempting last-resort fallback to return any available products")
+                # Just get some products to show something to the user
+                cursor = products_collection.find({}).limit(fallback_candidate_limit)
+                docs = await run_in_threadpool(list, cursor)
+                
+                for doc in docs:
+                    try:
+                        fallback_results.append(ProductStored.model_validate(doc))
+                    except Exception as e:
+                        print(f"Error parsing product: {e}")
+                        continue
+                
+                print(f"Last-resort fallback search found {len(fallback_results)} candidates.")
+            except Exception as e:
+                print(f"Last-resort search failed: {e}")
+        
         return fallback_results
     except Exception as e:
         print(f"Error in _trigger_fallback_search: {e}")
         return []
-
-
 
 async def retrieve_candidates_from_mongodb(
     matched_categories: List[str],
@@ -199,45 +250,93 @@ async def retrieve_candidates_from_mongodb(
 ) -> List[ProductStored]:
     """
     Retrieves candidate products from MongoDB based on category and filter criteria.
+    Uses a progressive fallback strategy if initial queries return no results.
     """
     try:
         products_col = get_products_collection()
-        mongo_query: Dict[str, Any] = {}
-        if matched_categories:
-            mongo_query["category"] = {"$in": matched_categories}
-        if filter_criteria:
-            price_cond: Dict[str, Any] = {}
-            if filter_criteria.get("price_min") is not None:
-                price_cond["$gte"] = float(filter_criteria["price_min"])
-            if filter_criteria.get("price_max") is not None:
-                price_cond["$lte"] = float(filter_criteria["price_max"])
-            if price_cond:
-                mongo_query["price"] = price_cond
-            brand = filter_criteria.get("brand")
-            if brand:
-                if isinstance(brand, list):
-                    mongo_query["brand"] = {"$in": brand}
-                else:
-                    mongo_query["brand"] = brand
-            keywords = filter_criteria.get("keywords_for_db_search")
-            if keywords:
-                mongo_query["$text"] = {"$search": " ".join(keywords)}
-        if not mongo_query:
-            return []
-
-        try:
-            cursor = products_col.find(mongo_query).limit(candidate_limit)
-            docs = await run_in_threadpool(list, cursor)
-        except Exception as e:
-            print(f"Error executing MongoDB query: {e}")
-            return []
-        print(f"Retrieved {len(docs)} candidate products from MongoDB.")
         results: List[ProductStored] = []
-        for doc in docs:
+        
+        # Step 1: Try with all filters including text search
+        if matched_categories or filter_criteria:
+            mongo_query: Dict[str, Any] = {}
+            if matched_categories:
+                mongo_query["category"] = {"$in": matched_categories}
+            
+            if filter_criteria:
+                # Add price filters if provided
+                price_cond: Dict[str, Any] = {}
+                if filter_criteria.get("price_min") is not None:
+                    price_cond["$gte"] = float(filter_criteria["price_min"])
+                if filter_criteria.get("price_max") is not None:
+                    price_cond["$lte"] = float(filter_criteria["price_max"])
+                if price_cond:
+                    mongo_query["price"] = price_cond
+                
+                # Add brand filter if provided
+                brand = filter_criteria.get("brand")
+                if brand:
+                    if isinstance(brand, list):
+                        mongo_query["brand"] = {"$in": brand}
+                    else:
+                        mongo_query["brand"] = brand
+                
+                # Try text search if keywords provided
+                keywords = filter_criteria.get("keywords_for_db_search")
+                if keywords:
+                    try:
+                        text_query = {"$text": {"$search": " ".join(keywords)}}
+                        full_query = {**mongo_query, **text_query}
+                        
+                        cursor = products_col.find(full_query).limit(candidate_limit)
+                        docs = await run_in_threadpool(list, cursor)
+                        
+                        for doc in docs:
+                            try:
+                                results.append(ProductStored.model_validate(doc))
+                            except Exception:
+                                continue
+                        
+                        print(f"Query with text search found {len(results)} products")
+                    except Exception as e:
+                        print(f"Text search query failed: {e}")
+            
+            # Step 2: If no results with text search, try without text search
+            if not results and mongo_query:
+                try:
+                    # Remove any text search part that might have been added
+                    if "$text" in mongo_query:
+                        del mongo_query["$text"]
+                    
+                    cursor = products_col.find(mongo_query).limit(candidate_limit)
+                    docs = await run_in_threadpool(list, cursor)
+                    
+                    for doc in docs:
+                        try:
+                            results.append(ProductStored.model_validate(doc))
+                        except Exception:
+                            continue
+                    
+                    print(f"Query without text search found {len(results)} products")
+                except Exception as e:
+                    print(f"Non-text query failed: {e}")
+        
+        # Step 3: If still no results, use just the category
+        if not results and matched_categories:
             try:
-                results.append(ProductStored.model_validate(doc))
-            except Exception:
-                continue
+                mongo_query = {"category": {"$in": matched_categories}}
+                cursor = products_col.find(mongo_query).limit(candidate_limit)
+                docs = await run_in_threadpool(list, cursor)
+                
+                for doc in docs:
+                    try:
+                        results.append(ProductStored.model_validate(doc))
+                    except Exception:
+                        continue
+                
+                print(f"Category-only query found {len(results)} products")
+            except Exception as e:
+                print(f"Category-only query failed: {e}")
+        
         return results
     except Exception as e:
         print(f"Error in retrieve_candidates_from_mongodb: {e}")
