@@ -22,10 +22,27 @@ from langchain.chains import LLMChain
 from langchain.output_parsers import PydanticOutputParser
 import pinecone
 import os
+from dotenv import load_dotenv
 
-# Disable LangSmith if URL is not correctly formatted
-if os.getenv("LANGCHAIN_ENDPOINT", "").startswith("https_"):
-    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+load_dotenv()
+
+# Configure LangSmith tracing
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+
+# Fix incorrect URL format (https_ instead of https://)
+endpoint = os.getenv("LANGCHAIN_ENDPOINT", "")
+if endpoint.startswith("https_"):
+    corrected_endpoint = endpoint.replace("https_", "https://")
+    os.environ["LANGCHAIN_ENDPOINT"] = corrected_endpoint
+    print(f"Corrected LANGCHAIN_ENDPOINT from '{endpoint}' to '{corrected_endpoint}'")
+
+# Check if required LangSmith environment variables are set
+if not os.getenv("LANGCHAIN_API_KEY"):
+    print("Warning: LANGCHAIN_API_KEY not found in environment. LangSmith tracing may not work.")
+if not os.getenv("LANGCHAIN_PROJECT"):
+    default_project = "genai-shopping-assistant"
+    os.environ["LANGCHAIN_PROJECT"] = default_project
+    print(f"LANGCHAIN_PROJECT not set, defaulting to: {default_project}")
 
 
 async def refine_query_with_llm1(
@@ -207,8 +224,14 @@ async def retrieve_candidates_from_mongodb(
                 mongo_query["$text"] = {"$search": " ".join(keywords)}
         if not mongo_query:
             return []
-        cursor = products_col.find(mongo_query).limit(candidate_limit)
-        docs = await run_in_threadpool(list, cursor)
+
+        try:
+            cursor = products_col.find(mongo_query).limit(candidate_limit)
+            docs = await run_in_threadpool(list, cursor)
+        except Exception as e:
+            print(f"Error executing MongoDB query: {e}")
+            return []
+        print(f"Retrieved {len(docs)} candidate products from MongoDB.")
         results: List[ProductStored] = []
         for doc in docs:
             try:

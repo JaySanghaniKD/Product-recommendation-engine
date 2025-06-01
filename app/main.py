@@ -14,6 +14,12 @@ from app.models.schemas import CartActionRequest, UserCartApiResponse
 from app.db.database import connect_to_mongo
 from app.db.vector_store import init_pinecone_client
 from app.db.llm_clients import get_llm_client, get_embedding_model
+from app.core.logging_config import configure_logging
+import logging
+
+# Configure logging at the earliest point
+configure_logging()
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -24,31 +30,43 @@ app = FastAPI(
 # Application startup event
 @app.on_event("startup")
 async def startup_event():
+    logger.info("Starting application...")
     try:
         connect_to_mongo()
-        print("MongoDB connection initialized.")
+        logger.info("MongoDB connection initialized.")
     except Exception as e:
-        print(f"MongoDB initialization error: {e}")
+        logger.error(f"MongoDB initialization error: {e}")
         raise
+
+    # Create text indices if they don't exist
+    try:
+        from app.db.setup_db import create_text_index_async
+        await create_text_index_async()
+        logger.info("MongoDB text indices setup completed")
+    except Exception as e:
+        logger.error(f"Failed to create text index: {e}")
+    
     try:
         init_pinecone_client()
-        print("Pinecone client initialized.")
+        logger.info("Pinecone client initialized.")
     except Exception as e:
-        print(f"Pinecone initialization error: {e}")
+        logger.error(f"Pinecone initialization error: {e}")
         raise
     # Pre-warm LLM clients
     try:
         get_llm_client()
         get_embedding_model()
-        print("LLM clients initialized.")
+        logger.info("LLM clients initialized.")
     except Exception as e:
-        print(f"LLM client initialization error: {e}")
+        logger.error(f"LLM client initialization error: {e}")
         raise
+
+    logger.info("Application startup completed")
 
 # Application shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
-    print("Application shutting down.")
+    logger.info("Application shutting down.")
     # Add explicit cleanup if necessary
 
 # Include search router
