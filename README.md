@@ -4,6 +4,16 @@
 
 This project is an AI-powered e-commerce application that enables users to search for products using natural language queries. The system leverages large language models to understand user intent and deliver relevant product results.
 
+## Demo
+
+[Video Link](https://drive.google.com/file/d/18uv2QqAk5Dw5L1z15iPNTw--1yfP9JCr/view?usp=sharing)
+
+Watch the demo video above to see the application in action. The video demonstrates:
+- Natural language search capabilities
+- Product browsing and details view
+- Cart functionality
+- Search history tracking
+
 ## Features
 
 - Natural language product search
