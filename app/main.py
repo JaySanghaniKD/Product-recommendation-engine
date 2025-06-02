@@ -11,9 +11,7 @@ load_dotenv()
 # Import routers and services
 from app.routers.search_router import router as search_router
 from app.routers.product_router import router as product_router
-from app.routers.category_router import router as category_router
 from app.routers.history_router import router as history_router
-from app.routers.recommendation_router import router as recommendation_router
 from app.routers.cart_router import router as cart_router
 from app.db.database import connect_to_mongo
 from app.db.vector_store import init_pinecone_client
@@ -85,9 +83,7 @@ async def shutdown_event():
 # Include all routers
 app.include_router(search_router)
 app.include_router(product_router)
-app.include_router(category_router)
 app.include_router(history_router)
-app.include_router(recommendation_router)
 app.include_router(cart_router)
 
 # Health check endpoint

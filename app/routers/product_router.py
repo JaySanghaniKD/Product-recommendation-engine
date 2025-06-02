@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query, Path
 from typing import List, Optional, Dict, Any
 from app.models.schemas import ProductStored
+from app.db.database import get_products_collection
+from fastapi.concurrency import run_in_threadpool
 from app.services.product_service import get_product_by_id, list_products
 import logging
 
@@ -51,3 +53,34 @@ async def list_products_endpoint(
     except Exception as e:
         logger.error(f"Error listing products: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error while listing products")
+
+@router.get("/featured/", response_model=List[ProductStored])
+async def get_featured_products(limit: int = Query(6, ge=1, le=20)):
+    """
+    Get a selection of random products to display on the homepage.
+    Much faster than the AI recommendations.
+    """
+    try:
+        products_col = get_products_collection()
+        
+        # Use MongoDB's aggregation framework to get random documents
+        # This is more efficient than fetching all and then sampling
+        pipeline = [
+            {"$sample": {"size": limit}},  # Get random documents
+        ]
+        
+        cursor = products_col.aggregate(pipeline)
+        random_products = await run_in_threadpool(list, cursor)
+        
+        # Convert to Pydantic models
+        result = []
+        for product in random_products:
+            try:
+                result.append(ProductStored.model_validate(product))
+            except Exception as e:
+                logger.warning(f"Error parsing product: {e}")
+                
+        return result
+    except Exception as e:
+        logger.error(f"Error retrieving featured products: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error while retrieving featured products")
