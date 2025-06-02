@@ -66,6 +66,76 @@ Our application implements a sophisticated AI-powered search pipeline:
 
 This advanced AI workflow combines vector search, traditional database queries, and large language models to create a truly intelligent shopping experience that understands natural human language and intent.
 
+## Project Structure
+
+```
+genai_project/
+├── .env.example              # Example environment variables
+├── .gitignore                # Git ignore file
+├── README.md                 # Project documentation
+├── requirements.txt          # Python dependencies
+├── setup.sh                  # Main setup script
+├── setup_backend.sh          # Backend setup script
+├── setup_frontend.sh         # Frontend setup script
+│
+├── app/                      # Backend application
+│   ├── main.py               # FastAPI application entry point
+│   ├── core/                 # Core application functionality
+│   │   ├── config.py         # Application configuration
+│   │   ├── logging_config.py # Logging setup
+│   │   └── search_agent.py   # AI search pipeline implementation
+│   │
+│   ├── db/                   # Database connections and clients
+│   │   ├── database.py       # MongoDB connection setup
+│   │   ├── llm_clients.py    # LLM client initialization
+│   │   └── vector_store.py   # Pinecone vector database setup
+│   │
+│   ├── models/               # Data models and schemas
+│   │   └── schemas.py        # Pydantic models for request/response validation
+│   │
+│   ├── routers/              # API route definitions
+│   │   ├── cart_router.py    # Shopping cart endpoints
+│   │   ├── history_router.py # User history endpoints
+│   │   ├── product_router.py # Product catalog endpoints
+│   │   └── search_router.py  # AI search endpoints
+│   │
+│   └── services/             # Business logic services
+│       ├── cart_service.py   # Cart management logic
+│       └── history_service.py # User history tracking logic
+│
+└── frontend/                 # React frontend application
+    ├── public/               # Static public assets
+    ├── src/                  # Source code
+    │   ├── index.tsx         # Application entry point
+    │   ├── App.tsx           # Main application component
+    │   ├── assets/           # Images, fonts, etc.
+    │   ├── components/       # Reusable UI components
+    │   │   ├── Navbar.tsx    # Navigation bar component
+    │   │   └── ProductCard.tsx # Product display component
+    │   │
+    │   ├── context/          # React context providers
+    │   │   └── CartContext.tsx # Shopping cart state management
+    │   │
+    │   ├── hooks/            # Custom React hooks
+    │   ├── pages/            # Page components
+    │   │   ├── CartPage.tsx  # Shopping cart page
+    │   │   ├── HistoryPage.tsx # User history page
+    │   │   ├── HomePage.tsx  # Landing page with search
+    │   │   ├── ProductDetailPage.tsx # Product details
+    │   │   └── SearchPage.tsx # Search results page
+    │   │
+    │   ├── services/         # API client services
+    │   │   └── api.ts        # API request functions
+    │   │
+    │   ├── types/            # TypeScript type definitions
+    │   │   └── models.ts     # Data model interfaces
+    │   │
+    │   └── utils/            # Utility functions
+    │
+    ├── package.json          # npm dependencies and scripts
+    └── tsconfig.json         # TypeScript configuration
+```
+
 ## Prerequisites
 
 - Node.js (v14+)
