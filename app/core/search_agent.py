@@ -24,6 +24,7 @@ from langchain.output_parsers import PydanticOutputParser
 import pinecone
 import os
 from dotenv import load_dotenv
+from langsmith import traceable
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ if not os.getenv("LANGCHAIN_PROJECT"):
     logger.info(f"LANGCHAIN_PROJECT not set, defaulting to: {default_project}")
 
 
+@traceable(name="refine_query_with_llm")
 async def refine_query_with_llm1(
     raw_query: str,
     user_history_summary: str,
@@ -87,7 +89,7 @@ async def refine_query_with_llm1(
                or categories the user is looking for. Examples: "comfortable running shoes for marathons",
                "modern kitchen appliances for a new home", "educational toys for toddlers".
             2. Identify specific 'filter_criteria' the user might have mentioned or implied. This should be a dictionary.
-               Supported filter keys are: 'price_min' (float), 'price_max' (float), 'brand' (str or List[str]),
+               Supported filter keys are: 'price_min' (float), 'price_max' (float), 'brand' (str or ["Brand1", "Brand2"]),
                'keywords_for_db_search' (List[str] of specific attributes or terms like "waterproof", "organic", "bluetooth").
                If no specific criteria are found for a key, omit it.
             3. Optionally provide 'extracted_tags' that might be useful for search.
@@ -134,6 +136,7 @@ async def refine_query_with_llm1(
         )
 
 
+@traceable(name="match_semantic_categories")
 async def match_semantic_categories(
     descriptive_category_phrases: List[str],
     top_k_categories: int = 1
@@ -165,6 +168,7 @@ async def match_semantic_categories(
         return []
 
 
+@traceable(name="trigger_fallback_search")
 async def _trigger_fallback_search(
     llm_analysis: LLMQueryAnalysisOutput,
     products_collection: Collection,
@@ -253,6 +257,7 @@ async def _trigger_fallback_search(
         logger.error(f"Error in _trigger_fallback_search: {e}", exc_info=True)
         return []
 
+@traceable(name="retrieve_candidates_from_mongodb")
 async def retrieve_candidates_from_mongodb(
     matched_categories: List[str],
     filter_criteria: Optional[Dict[str, Any]],
@@ -359,6 +364,7 @@ async def retrieve_candidates_from_mongodb(
         logger.error(f"Error in retrieve_candidates_from_mongodb: {e}", exc_info=True)
         return []
 
+@traceable(name="rerank_and_select_products_with_llm")
 async def rerank_and_select_products_with_llm2(
     raw_query: str,
     user_history_summary: str,
@@ -466,6 +472,7 @@ async def rerank_and_select_products_with_llm2(
         logger.error(f"Error in rerank_and_select_products_with_llm2: {e}", exc_info=True)
         return None
 
+@traceable(name="search_pipeline")
 async def run_search_pipeline(
     user_id: str,
     raw_query: str

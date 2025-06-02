@@ -9,3 +9,4 @@ langchain_openai
 python-dotenv
 pymongo
 uvicorn[standard]
+langsmith

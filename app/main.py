@@ -3,14 +3,18 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # Load environment variables
 load_dotenv()
 
 # Import routers and services
 from app.routers.search_router import router as search_router
-from app.services.cart_service import add_to_cart, get_cart, remove_from_cart
-from app.models.schemas import CartActionRequest, UserCartApiResponse
+from app.routers.product_router import router as product_router
+from app.routers.category_router import router as category_router
+from app.routers.history_router import router as history_router
+from app.routers.recommendation_router import router as recommendation_router
+from app.routers.cart_router import router as cart_router
 from app.db.database import connect_to_mongo
 from app.db.vector_store import init_pinecone_client
 from app.db.llm_clients import get_llm_client, get_embedding_model
@@ -25,6 +29,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="GenAI Product Discovery Engine",
     version="1.0.0"
+)
+
+# Add CORS middleware to allow cross-origin requests from the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 # Application startup event
@@ -69,41 +82,12 @@ async def shutdown_event():
     logger.info("Application shutting down.")
     # Add explicit cleanup if necessary
 
-# Include search router
+# Include all routers
 app.include_router(search_router)
-
-# Cart endpoints
-cart_router = APIRouter(prefix="/cart", tags=["Cart"])
-
-@cart_router.get("/{user_id}", response_model=UserCartApiResponse)
-async def get_user_cart_endpoint(user_id: str):
-    cart = await get_cart(user_id)
-    if not cart:
-        raise HTTPException(status_code=404, detail="Cart not found")
-    return cart
-
-@cart_router.post("/item", response_model=UserCartApiResponse)
-async def add_item_to_cart_endpoint(request: CartActionRequest):
-    updated_cart = await add_to_cart(
-        user_id=request.user_id,
-        product_id=request.product_id,
-        quantity=request.quantity or 1
-    )
-    if not updated_cart:
-        raise HTTPException(status_code=400, detail="Failed to add item to cart")
-    return updated_cart
-
-@cart_router.delete("/item", response_model=UserCartApiResponse)
-async def remove_item_from_cart_endpoint(request: CartActionRequest):
-    updated_cart = await remove_from_cart(
-        user_id=request.user_id,
-        product_id=request.product_id
-    )
-    if not updated_cart:
-        raise HTTPException(status_code=400, detail="Failed to remove item from cart")
-    return updated_cart
-
-# Include cart router
+app.include_router(product_router)
+app.include_router(category_router)
+app.include_router(history_router)
+app.include_router(recommendation_router)
 app.include_router(cart_router)
 
 # Health check endpoint
